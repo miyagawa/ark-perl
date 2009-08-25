@@ -377,7 +377,7 @@ sub uri_with_sessionid {
     my ($self, $uri, $sid) = @_;
     
     $sid  ||= $self->session_id;
-    $self->log( debug => q[uri_with_sessionid Found sessionid "%s"], $sid||'' );
+    #$self->log( debug => q[uri_with_sessionid Found sessionid "%s"], $sid||'' );
     
     my $uri_obj = eval { URI->new($uri) } || return $uri;
     
