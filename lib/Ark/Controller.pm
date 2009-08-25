@@ -32,6 +32,11 @@ sub MODIFY_CODE_ATTRIBUTES {
     return;
 }
 
+sub ACTION {
+    my ($self, $action, @args) = @_;
+    $self->context->execute( $self, $action->name, @args );
+}
+
 sub _parse_Path_attr {
     my ($self, $name, $value) = @_;
     $value = '' unless defined $value;

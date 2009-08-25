@@ -21,7 +21,7 @@ sub config {
     $class->__component_config({}) unless $class->__component_config;
 
     if ($config) {
-        for my $key (%{ $config || {} }) {
+        for my $key (keys %{ $config || {} }) {
             $class->__component_config->{ $key } = $config->{$key};
         }
     }
@@ -48,12 +48,20 @@ sub class_config {
 
     my $classconfig = $self->app->config->{ $name } ||= {};
     if ($config) {
-        for my $key (%{ $config || {} }) {
+        for my $key (keys %{ $config || {} }) {
             $classconfig->{ $key } = $config->{$key};
         }
     }
 
     $classconfig;
+}
+
+sub class_stash {
+    my $self  = shift;
+    my $class = caller;
+    return unless $self->app;
+
+    $self->app->class_stash->{ $class } ||= {};
 }
 
 1;

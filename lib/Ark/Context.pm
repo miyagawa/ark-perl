@@ -8,6 +8,8 @@ use Scalar::Util ();
 
 our $DETACH = 'ARK_DETACH';
 
+extends 'Ark::Component';
+
 coerce 'Ark::Request'
     => from 'Object'
     => via {
@@ -36,7 +38,7 @@ has app => (
     required => 1,
     weak_ref => 1,
     handles  => ['debug', 'log', 'get_actions', 'get_action', 'ensure_class_loaded',
-                 'component', 'view', 'model', 'path_to', ],
+                 'component', 'view', 'model', 'path_to', 'config',],
 );
 
 has stash => (
@@ -63,6 +65,12 @@ has error => (
     isa     => 'ArrayRef',
     lazy    => 1,
     default => sub { [] },
+);
+
+has detached => (
+    is      => 'rw',
+    isa     => 'Bool',
+    default => 0,
 );
 
 {   # alias
@@ -94,7 +102,7 @@ sub prepare_action {
 
     my $vpath = $req->uri->rel->path;
     $vpath =~ s!^\.\./[^/]+!!;                    # fix ../foo/path => /path
-    $vpath =~ s/^\.+//;                           # fix ./path => /path
+    $vpath =~ s!^\./!!;                           # fix ./path => /path
     $vpath = '/' . $vpath unless $vpath =~ m!^/!; # path should be / first
 
     my @path = split /\//, $vpath;
@@ -204,6 +212,7 @@ sub execute {
     if (my $error = $@) {
         if ($error =~ /^${DETACH} at /) {
             die $DETACH if ($self->depth > 1);
+            $self->detached(1);
         }
         else {
             push @{ $self->error }, $error;
@@ -218,7 +227,8 @@ sub execute_action {
     my ($self, $obj, $method, @args) = @_;
 
     eval {
-        $self->state( $obj->$method($self, @args) );
+        my $state = $obj->$method($self, @args);
+        $self->state( defined $state ? $state : undef );
     };
 }
 

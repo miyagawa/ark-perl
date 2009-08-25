@@ -26,6 +26,11 @@ sub run {
     eval "use lib q[$libdir]";
     die $@ if $@;
 
+    my $extlib = $libdir->parent->subdir('extlib');
+    if (-d $extlib) {
+        eval "use lib q[$extlib]";
+    }
+
     my $app_name = $args[0];
     if ($app_name) {
         eval "use $app_name";
@@ -40,7 +45,12 @@ sub run {
             return if $app_name;
             return unless -f $file && $file->basename =~ /\.pm$/;
 
-            (my $module = $file) =~ s!^$libdir/!!;
+            my $path = $libdir;
+            if ($^O eq 'MSWin32') {
+                $file =~ s!\\!/!g;
+                $path =~ s!\\!/!g;
+            }
+            (my $module = $file) =~ s!^$path/!!;
             $module =~ s!/!::!g;
             $module =~ s!\.pm$!!;
 

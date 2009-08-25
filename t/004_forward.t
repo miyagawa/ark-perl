@@ -78,39 +78,69 @@ use Test::Base;
         $c->res->body(join ',', $foo, $bar);
     }
 
+    use Test::More;
+    sub return_undef_check :Local {
+        my ($self, $c) = @_;
+
+        is($c->state, 0, 'initial state ok');
+
+        my $state = $c->forward('just_return');
+        is($state, undef, 'undef state ok');
+    }
+
+    sub just_return :Private {
+        my ($self, $c) = @_;
+        return;
+    }
 }
 
-use Ark::Test 'TestApp',
-    components => [qw/Controller::Root/];
+require Ark::Test;
 
 plan 'no_plan';
 
-{
-    my $res = request( GET => '/root/one' );
-    ok( $res->is_success, 'request ok');
-    is( $res->content, 'one_two_tree_four_five_six_', 'forward ok');
+sub run_tests() {
+    {
+        my $res = request( GET => '/root/one' );
+        ok( $res->is_success, 'request ok');
+        is( $res->content, 'one_two_tree_four_five_six_', 'forward ok');
+    }
+
+    {
+        my $res = request( GET => '/root/seven' );
+        ok( $res->is_success, 'request ok');
+        is( $res->content, 'seven_eight_', 'forward ok');
+    }
+
+    {
+        my $res = request( GET => '/root/request_args/FOO/BAR' );
+        ok( $res->is_success, 'request ok');
+        is( $res->content, 'FOO,BAR', 'request args ok');
+    }
+
+    {
+        my $res = request( GET => '/capture_args/FOO/BAR' );
+        ok( $res->is_success, 'request ok');
+        is( $res->content, 'FOO,BAR', 'capture args ok');
+    }
+
+    {
+        my $res = request( GET => '/forward_capture_args/FOO/BAR' );
+        ok( $res->is_success, 'request ok');
+        is( $res->content, 'FOO,BAR', 'forward capture args ok');
+    }
+
+    {
+        get('/root/return_undef_check');
+    }
 }
 
-{
-    my $res = request( GET => '/root/seven' );
-    ok( $res->is_success, 'request ok');
-    is( $res->content, 'seven_eight_', 'forward ok');
-}
+import Ark::Test 'TestApp',
+    components => [qw/Controller::Root/];
 
-{
-    my $res = request( GET => '/root/request_args/FOO/BAR' );
-    ok( $res->is_success, 'request ok');
-    is( $res->content, 'FOO,BAR', 'request args ok');
-}
+run_tests;
 
-{
-    my $res = request( GET => '/capture_args/FOO/BAR' );
-    ok( $res->is_success, 'request ok');
-    is( $res->content, 'FOO,BAR', 'capture args ok');
-}
+import Ark::Test 'TestApp',
+    components => [qw/Controller::Root/],
+    minimal_setup => 1;
 
-{
-    my $res = request( GET => '/forward_capture_args/FOO/BAR' );
-    ok( $res->is_success, 'request ok');
-    is( $res->content, 'FOO,BAR', 'forward capture args ok');
-}
+run_tests;

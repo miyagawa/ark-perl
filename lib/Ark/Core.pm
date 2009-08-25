@@ -6,11 +6,13 @@ use Ark::Action;
 use Ark::ActionContainer;
 use Ark::Request;
 
+use Exporter::AutoClean;
 use Path::Class qw/file dir/;
 
 extends 'Mouse::Object', 'Class::Data::Inheritable';
 
-__PACKAGE__->mk_classdata($_) for qw/configdata plugins/;
+__PACKAGE__->mk_classdata($_)
+    for qw/context configdata plugins _class_stash external_model_class/;
 
 has handler => (
     is      => 'rw',
@@ -75,6 +77,16 @@ has actions => (
     default => sub { {} },
 );
 
+has action_cache => (
+    is      => 'rw',
+    isa     => 'Object',
+    lazy    => 1,
+    default => sub {
+        my $self = shift;
+        $self->path_to('action.cache');
+    },
+);
+
 has dispatch_types => (
     is      => 'rw',
     isa     => 'ArrayRef',
@@ -106,12 +118,6 @@ has context_class => (
     },
 );
 
-# current context
-has context => (
-    is       => 'rw',
-    isa      => 'Ark::Context',
-);
-
 has setup_finished => (
     is      => 'rw',
     isa     => 'Bool',
@@ -137,12 +143,18 @@ no Mouse;
 sub EXPORT {
     my ($class, $target) = @_;
 
-    {
-        no strict 'refs';
+    my $load_plugins = $class->can('load_plugins');
+    my $use_model    = $class->can('use_model');
+    my $config       = $class->can('config');
+    my $config_sub   = sub { $config->( $target, @_ ) };
 
-        *{"${target}::use_plugins"} = sub { $target->load_plugins(@_) };
-        *{"${target}::conf"}        = sub { $target->config(@_) };
-    }
+    Exporter::AutoClean->export(
+        $target,
+        use_plugins => sub { $load_plugins->( $target, @_ ) },
+        use_model   => sub { $use_model->( $target, @_ ) },
+        config      => $config_sub,
+        conf        => $config_sub, # backward compatibility
+    );
 }
 
 sub debug {
@@ -187,10 +199,16 @@ sub class_wrapper {
     die $@ if $@;
 
     for my $plugin (@{ $self->lazy_roles->{ $args->{name} } || [] }) {
-        $plugin->meta->apply( $classname->meta );
+        $plugin->meta->apply( $classname->meta )
+            unless $classname->meta->does_role( $plugin );
     }
 
     $classname;
+}
+
+sub class_stash {
+    my $self = shift;
+    $self->_class_stash || $self->_class_stash({});
 }
 
 sub load_plugins {
@@ -235,11 +253,19 @@ sub setup_store {
 
     $self->setup unless $self->setup_finished;
 
-    my $cache = $self->path_to('action.cache');
+    my $cache = $self->action_cache or die q[action_cache does not specified];
     $self->ensure_class_loaded('Storable');
 
     my $used_dispatch_types
         = [ grep { $_->used } @{ $self->dispatch_types } ];
+
+    # decompile regexp action because storable doen't recognize compiled regexp
+    my ($regex_type) = grep { $_->name eq 'Regex' } @{ $self->dispatch_types };
+    if ($regex_type->used) {
+        for my $compiled (@{ $regex_type->compiled }) {
+            $compiled->{re} = "$compiled->{re}";
+        }
+    }
 
     for my $namespace (keys %{ $self->actions }) { # TODO: clone this
         my $container = $self->actions->{$namespace};
@@ -260,7 +286,7 @@ sub setup_store {
 sub setup_retrieve {
     my $self = shift;
 
-    my $cache = $self->path_to('action.cache');
+    my $cache = $self->action_cache or die q[action_cache does not specified];
     $self->ensure_class_loaded('Storable');
 
     my $state = eval { Storable::retrieve($cache) }
@@ -277,7 +303,7 @@ sub setup_retrieve {
 }
 
 sub setup_minimal {
-    my $self = shift;
+    my ($self, %option) = @_;
 
     $self->setup_debug_mode if $self->debug;
 
@@ -285,12 +311,16 @@ sub setup_minimal {
     $self->setup_plugins;
 
     # cache
+    $self->action_cache( $self->path_to($option{action_cache}) )
+        if $option{action_cache};
+
     $self->setup_retrieve;
     $self->setup_store unless $self->setup_finished;
 }
 
 sub setup_debug_mode {
     my $self = shift;
+    return if $self->context_class->meta->does_role('Ark::Context::Debug');
 
     $self->ensure_class_loaded('Ark::Context::Debug');
     Ark::Context::Debug->meta->apply( $self->context_class->meta );
@@ -303,18 +333,20 @@ sub setup_home {
     my $class = ref $self;
     (my $file = "${class}.pm") =~ s!::!/!g;
 
-    my $path = $INC{$file} or return;
-    $path =~ s/$file$//;
+    if (my $path = $INC{$file}) {
+        $path =~ s/$file$//;
 
-    $path = dir($path);
-    return unless -d $path;
+        $path = dir($path);
 
-    $path = $path->absolute;
-    while ($path->dir_list(-1) =~ /^b?lib$/) {
-        $path = $path->parent;
+        if (-d $path) {
+            $path = $path->absolute;
+            while ($path->dir_list(-1) =~ /^b?lib$/) {
+                $path = $path->parent;
+            }
+
+            $self->config->{home} = $path;
+        }
     }
-
-    $self->config->{home} = $path;
 }
 
 sub setup_plugin {
@@ -324,14 +356,16 @@ sub setup_plugin {
 
     if (my $target_context = $plugin->plugin_context) {
         if ($target_context eq 'Core') {
-            $plugin->meta->apply( $self->meta );
+            $plugin->meta->apply( $self->meta )
+                unless $self->meta->does_role($plugin);
         }
         else {
             push @{ $self->lazy_roles->{ $target_context } }, $plugin;
         }
         return;
     }
-    $plugin->meta->apply( $self->context_class->meta );
+    $plugin->meta->apply( $self->context_class->meta )
+        unless $self->context_class->meta->does_role($plugin);
 }
 
 sub setup_plugins {
@@ -380,6 +414,7 @@ sub load_component {
     }
 
     $self->ensure_class_loaded($component) or return;
+    $component->isa('Ark::Component') or return;
 
     # merge config
     $component->config( $self->config->{ $component->component_name } );
@@ -415,6 +450,11 @@ sub controller {
 
 sub model {
     my ($self, $name) = @_;
+
+    if (my $class = $self->external_model_class) {
+        return $name ? $class->get($name) : $class;
+    }
+
     return unless $name;
     $self->component('Model::' . $name);
 }
@@ -423,6 +463,13 @@ sub view {
     my ($self, $name) = @_;
     return unless $name;
     $self->component('View::' . $name);
+}
+
+sub use_model {
+    my ($self, $model_class) = @_;
+    $self->ensure_class_loaded( $model_class );
+    $self->external_model_class( $model_class );
+    $model_class->initialize if $model_class->can('initialize');
 }
 
 sub register_actions {
@@ -540,6 +587,9 @@ sub ensure_class_loaded {
 sub path_to {
     my ($self, @path) = @_;
 
+    die qq[Can't call path_to method before setup_home]
+        unless $self->config->{home};
+
     my $path = dir( $self->config->{home}, @path );
     return $path if -d $path;
     return file($path);
@@ -549,12 +599,18 @@ sub handle_request {
     my ($self, $req) = @_;
 
     my $context = $self->context_class->new( app => $self, request => $req );
-
     $self->context($context)->process;
+    $self->context(undef);
 
     if ( my $error = $context->error->[-1] ) {
         chomp $error;
         $self->log( error => 'Caught exception in engine "%s"', $error );
+
+        unless ($self->debug) {
+            my $res = $context->response;
+            $res->status(500);
+            $res->body('Internal Server Error');
+        }
     }
 
     return $context->response;
