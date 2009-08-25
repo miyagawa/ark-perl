@@ -93,20 +93,20 @@ has 'overload_uri_for' => (
         my $self = shift;
         $self->class_config->{param}
             || $self->app->config->{'session'}{param}
-            || 'sid' ;
+            || 1;
     },
 );
 
 sub BUILD {
     my ($self) = @_;
-    my $ctx = $self->app->context_class;
+    
+    my $ctx  = $self->app->context_class;
+    my $role = 'Ark::Plugin::Session::State::URI::ExtendContext';
 
-    $ctx->meta->add_around_method_modifier('uri_for', sub {
-        my $next = shift;
-        return $self->overload_uri_for
-            ? $self->uri_with_sessionid($next->(@_))
-            : $next->(@_);
-    });
+    return if $ctx->meta->does_role($role);
+
+    $self->ensure_class_loaded($role);
+    $role->meta->apply( $ctx->meta );
 }
 
 sub get_session_id_from_param {
