@@ -18,6 +18,7 @@ use HTTP::MobileAgent;
     no warnings 'redefine';
     *HTTP::MobileAgent::Request::new = sub {
         my($class, $stuff) = @_;
+
         if (!defined $stuff) {
             bless { env => \%ENV }, 'HTTP::MobileAgent::Request::Env';
         }
@@ -25,6 +26,9 @@ use HTTP::MobileAgent;
             bless { r => $stuff }, 'HTTP::MobileAgent::Request::Apache';
         }
         elsif ( UNIVERSAL::isa($stuff, 'HTTP::Headers') || UNIVERSAL::isa($stuff, 'HTTP::Headers::Fast') ) {
+            if ( my $HTTP_X_UP_DEVCAP_MULTIMEDIA = $stuff->{'x-up-devcap-multimedia'} ) {
+                $ENV{ HTTP_X_UP_DEVCAP_MULTIMEDIA } = $HTTP_X_UP_DEVCAP_MULTIMEDIA; # to fake HTTP::MobileAgent::Plugin::Locator::_gps_compliant or HTTP::MobileAgent::EZweb::gps_compliant
+            }
             bless { r => $stuff }, 'HTTP::MobileAgent::Request::HTTPHeaders';
         }
         else {
